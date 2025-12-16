@@ -3,14 +3,6 @@ import { promisify } from "util";
 
 const exec = promisify(execCallback);
 
-/**
- * Normalize escaped newlines in a string (convert literal \n to actual newlines)
- */
-function normalizeNewlines(str) {
-  if (typeof str !== "string") return str;
-  return str.replace(/\\n/g, "\n");
-}
-
 // Path to the repo where Claude will work (configure this)
 const REPO_PATH = process.env.REPO_PATH || process.cwd();
 
@@ -219,12 +211,6 @@ An issue CANNOT be resolved automatically if:
     const jsonMatch = analysisResult.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       analysis = JSON.parse(jsonMatch[0]);
-      // Normalize escaped newlines in string values
-      for (const key of Object.keys(analysis)) {
-        if (typeof analysis[key] === "string") {
-          analysis[key] = normalizeNewlines(analysis[key]);
-        }
-      }
     } else {
       throw new Error("No JSON found in response");
     }
@@ -235,7 +221,11 @@ An issue CANNOT be resolved automatically if:
       repoOwner,
       repoName,
       issueNumber,
-      `🤖 **AutoClaude Analysis Failed**\n\nI encountered an error while trying to analyze this ${itemType}. A human will need to review it.\n\nError: ${error.message}`,
+      `🤖 **AutoClaude Analysis Failed**
+
+I encountered an error while trying to analyze this ${itemType}. A human will need to review it.
+
+Error: ${error.message}`,
       isPullRequest,
     );
     return;
@@ -247,7 +237,15 @@ An issue CANNOT be resolved automatically if:
       repoOwner,
       repoName,
       issueNumber,
-      `🤖 **AutoClaude Analysis**\n\nI've analyzed this ${itemType} and determined that it **cannot be resolved automatically**.\n\n**Reason:** ${analysis.reason}\n\n**Confidence:** ${analysis.confidence}\n\nThis ${itemType} requires human attention.`,
+      `🤖 **AutoClaude Analysis**
+
+I've analyzed this ${itemType} and determined that it **cannot be resolved automatically**.
+
+**Reason:** ${analysis.reason}
+
+**Confidence:** ${analysis.confidence}
+
+This ${itemType} requires human attention.`,
       isPullRequest,
     );
     return;
@@ -303,8 +301,7 @@ Instructions:
 
 After making changes, provide a brief summary of what you changed.`;
 
-    const fixResultRaw = await runClaude(fixPrompt, REPO_PATH);
-    const fixResult = normalizeNewlines(fixResultRaw);
+    const fixResult = await runClaude(fixPrompt, REPO_PATH);
     console.log("Fix result:", fixResult);
 
     // Check if there are any changes
@@ -325,7 +322,17 @@ After making changes, provide a brief summary of what you changed.`;
         repoOwner,
         repoName,
         issueNumber,
-        `🤖 **AutoClaude Analysis**\n\nI analyzed this ${itemType} and attempted to create a fix, but no code changes were necessary or I couldn't determine the exact changes needed.\n\n**My Analysis:**\n${analysis.reason}\n\n**Approach Considered:**\n${analysis.approach}\n\nA human may need to review this ${itemType}.`,
+        `🤖 **AutoClaude Analysis**
+
+I analyzed this ${itemType} and attempted to create a fix, but no code changes were necessary or I couldn't determine the exact changes needed.
+
+**My Analysis:**
+${analysis.reason}
+
+**Approach Considered:**
+${analysis.approach}
+
+A human may need to review this ${itemType}.`,
         isPullRequest,
       );
       return;
@@ -349,7 +356,19 @@ After making changes, provide a brief summary of what you changed.`;
         repoOwner,
         repoName,
         issueNumber,
-        `🤖 **AutoClaude Changes Pushed**\n\nI've addressed the requested changes and pushed a new commit to this PR.\n\n**Changes Made:**\n${fixResult}\n\n**Analysis:**\n- **Confidence:** ${analysis.confidence}\n- **Complexity:** ${analysis.estimatedComplexity}\n- **Approach:** ${analysis.approach}\n\nPlease review the new changes.`,
+        `🤖 **AutoClaude Changes Pushed**
+
+I've addressed the requested changes and pushed a new commit to this PR.
+
+**Changes Made:**
+${fixResult}
+
+**Analysis:**
+- **Confidence:** ${analysis.confidence}
+- **Complexity:** ${analysis.estimatedComplexity}
+- **Approach:** ${analysis.approach}
+
+Please review the new changes.`,
         true,
       );
     } else {
@@ -389,7 +408,14 @@ ${fixResult}
           repoOwner,
           repoName,
           issueNumber,
-          `🤖 **AutoClaude Fix Created**\n\nI've analyzed this issue and created a fix!\n\n**Pull Request:** #${pr.number}\n**Link:** ${pr.html_url}\n\nPlease review the changes and merge if they look good. The issue will be automatically closed when the PR is merged.`,
+          `🤖 **AutoClaude Fix Created**
+
+I've analyzed this issue and created a fix!
+
+**Pull Request:** #${pr.number}
+**Link:** ${pr.html_url}
+
+Please review the changes and merge if they look good. The issue will be automatically closed when the PR is merged.`,
           false,
         );
       }
@@ -416,7 +442,17 @@ ${fixResult}
       repoOwner,
       repoName,
       issueNumber,
-      `🤖 **AutoClaude Fix Failed**\n\nI analyzed this ${itemType} and attempted to create a fix, but encountered an error.\n\n**My Analysis:**\n- **Can Resolve:** Yes (${analysis.confidence} confidence)\n- **Approach:** ${analysis.approach}\n\n**Error:** ${error.message}\n\nA human will need to review this ${itemType}.`,
+      `🤖 **AutoClaude Fix Failed**
+
+I analyzed this ${itemType} and attempted to create a fix, but encountered an error.
+
+**My Analysis:**
+- **Can Resolve:** Yes (${analysis.confidence} confidence)
+- **Approach:** ${analysis.approach}
+
+**Error:** ${error.message}
+
+A human will need to review this ${itemType}.`,
       isPullRequest,
     );
   }
