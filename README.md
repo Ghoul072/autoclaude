@@ -4,8 +4,8 @@ Automated GitHub issue resolver powered by Claude. When an issue is opened, Clau
 
 ## How It Works
 
-1. A GitHub issue is opened in your repository
-2. GitHub workflow triggers and sends the issue to AutoClaude webhook
+1. A GitHub issue is opened in your repository, OR a configured user is @mentioned in a comment
+2. GitHub workflow triggers and sends the event to AutoClaude webhook
 3. Claude analyzes the issue to determine if it can be resolved automatically
 4. If yes: Claude creates a fix, commits it to a new branch, and opens a PR
 5. If no: Claude comments on the issue explaining why it needs human attention
@@ -52,6 +52,9 @@ GITHUB_TOKEN=ghp_<your-token>
 
 # Path to local clone of target repo
 REPO_PATH=/path/to/target-repo
+
+# GitHub username to watch for @mentions in comments (optional)
+GITHUB_MENTION_USER=your_github_username
 ```
 
 ### 3. Clone Target Repository
@@ -96,6 +99,7 @@ npm run dev
 | `WEBHOOK_SECRET` | Secret for GitHub webhook signature verification | Recommended |
 | `GITHUB_TOKEN` | GitHub PAT with repo permissions | Yes |
 | `REPO_PATH` | Path to local clone of target repo | No (default: current directory) |
+| `GITHUB_MENTION_USER` | GitHub username to trigger on @mentions in comments | No |
 
 ## Endpoints
 
