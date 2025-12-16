@@ -65,17 +65,38 @@ function runClaude(prompt, cwd) {
 /**
  * Post a comment on a GitHub issue or PR using gh CLI
  */
-async function postComment(owner, repo, number, body, isPullRequest = false) {
-  try {
-    const command = isPullRequest ? "pr" : "issue";
-    await exec(
-      `gh ${command} comment ${number} --repo ${owner}/${repo} --body ${JSON.stringify(body)}`,
-    );
-    console.log(`Posted comment on ${command} #${number}`);
-  } catch (error) {
-    console.error("Failed to post comment:", error.message);
-    throw error;
-  }
+function postComment(owner, repo, number, body, isPullRequest = false) {
+  const command = isPullRequest ? "pr" : "issue";
+  return new Promise((resolve, reject) => {
+    const gh = spawn("gh", [
+      command,
+      "comment",
+      String(number),
+      "--repo",
+      `${owner}/${repo}`,
+      "--body-file",
+      "-",
+    ]);
+
+    gh.on("close", (code) => {
+      if (code === 0) {
+        console.log(`Posted comment on ${command} #${number}`);
+        resolve();
+      } else {
+        const error = new Error(`Failed to post comment on ${command} #${number}`);
+        console.error(error.message);
+        reject(error);
+      }
+    });
+
+    gh.on("error", (err) => {
+      console.error("Failed to post comment:", err.message);
+      reject(err);
+    });
+
+    gh.stdin.write(body);
+    gh.stdin.end();
+  });
 }
 
 /**
