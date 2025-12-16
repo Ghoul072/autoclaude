@@ -8,8 +8,12 @@ const PORT = process.env.PORT || 3000;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const GITHUB_MENTION_USER = process.env.GITHUB_MENTION_USER;
 
-// Parse JSON body
-app.use(express.json());
+// Parse JSON body and capture raw body for signature verification
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 
 // Verify GitHub webhook signature
 function verifySignature(req) {
@@ -23,10 +27,9 @@ function verifySignature(req) {
     return false;
   }
 
-  const body = JSON.stringify(req.body);
   const expectedSignature = 'sha256=' + crypto
     .createHmac('sha256', WEBHOOK_SECRET)
-    .update(body)
+    .update(req.rawBody)
     .digest('hex');
 
   return crypto.timingSafeEqual(
