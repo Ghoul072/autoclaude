@@ -1,0 +1,24 @@
+# AutoClaude Issue Handler
+# This workflow triggers when an issue is opened and sends it to AutoClaude for analysis
+# Copy this file to your repository's .github/workflows/ directory
+
+name: AutoClaude Issue Handler
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  analyze-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send issue to AutoClaude
+        run: |
+          curl -X POST "${{ secrets.AUTOCLAUDE_WEBHOOK_URL }}/webhook/github" \
+            -H "Content-Type: application/json" \
+            -H "X-GitHub-Event: issues" \
+            -H "X-Hub-Signature-256: sha256=$(echo -n '${{ toJson(github.event) }}' | openssl dgst -sha256 -hmac '${{ secrets.AUTOCLAUDE_WEBHOOK_SECRET }}' | cut -d' ' -f2)" \
+            -d '${{ toJson(github.event) }}'
+        env:
+          AUTOCLAUDE_WEBHOOK_URL: ${{ secrets.AUTOCLAUDE_WEBHOOK_URL }}
+          AUTOCLAUDE_WEBHOOK_SECRET: ${{ secrets.AUTOCLAUDE_WEBHOOK_SECRET }}
