@@ -5,7 +5,7 @@ Automated GitHub issue resolver powered by Claude. When an issue is opened, Clau
 ## How It Works
 
 1. A GitHub issue is opened in your repository, OR a configured user is @mentioned in a comment
-2. GitHub workflow triggers and sends the event to AutoClaude webhook
+2. GitHub workflow triggers and sends the event to AutoClaude webhook which you run locally
 3. Claude analyzes the issue to determine if it can be resolved automatically
 4. If yes: Claude creates a fix, commits it to a new branch, and opens a PR
 5. If no: Claude comments on the issue explaining why it needs human attention
