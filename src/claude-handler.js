@@ -167,7 +167,7 @@ An issue CANNOT be resolved automatically if:
       repoOwner,
       repoName,
       issueNumber,
-      `🤖 **AutoClaude Analysis Failed**\n\nI encountered an error while trying to analyze this issue. A human will need to review it.\n\nError: ${error.message}`
+      `🤖 **AutoClaude Analysis Failed**\n\nI encountered an error while trying to analyze this issue. A human will need to review it.\n\nError: ${normalizeNewlines(error.message)}`
     );
     return;
   }
@@ -289,7 +289,7 @@ ${fixResult}
       repoOwner,
       repoName,
       issueNumber,
-      `🤖 **AutoClaude Fix Failed**\n\nI analyzed this issue and attempted to create a fix, but encountered an error.\n\n**My Analysis:**\n- **Can Resolve:** Yes (${analysis.confidence} confidence)\n- **Approach:** ${analysis.approach}\n\n**Error:** ${error.message}\n\nA human will need to review this issue.`
+      `🤖 **AutoClaude Fix Failed**\n\nI analyzed this issue and attempted to create a fix, but encountered an error.\n\n**My Analysis:**\n- **Can Resolve:** Yes (${analysis.confidence} confidence)\n- **Approach:** ${analysis.approach}\n\n**Error:** ${normalizeNewlines(error.message)}\n\nA human will need to review this issue.`
     );
   }
 }
