@@ -1,12 +1,12 @@
 # AutoClaude Issue Handler
-# This workflow triggers when an issue is opened or when a user is mentioned in a comment
+# This workflow triggers when an issue is assigned or when a user is mentioned in a comment
 # Copy this file to your repository's .github/workflows/ directory
 
 name: AutoClaude Issue Handler
 
 on:
   issues:
-    types: [opened]
+    types: [assigned]
   issue_comment:
     types: [created]
 
