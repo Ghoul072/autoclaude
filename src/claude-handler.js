@@ -298,18 +298,53 @@ Instructions:
 2. Make minimal, focused changes
 3. Ensure the code is correct and follows existing patterns
 4. Do not make unrelated changes
+5. IMPORTANT: Do NOT commit the changes. Only make file modifications. The commit will be handled externally.
 
 After making changes, provide a brief summary of what you changed.`;
 
     const fixResult = await runClaude(fixPrompt, REPO_PATH);
     console.log("Fix result:", fixResult);
 
-    // Check if there are any changes
+    // Check if there are any uncommitted changes
     const { stdout: statusOutput } = await exec("git status --porcelain", {
       cwd: REPO_PATH,
     });
 
-    if (!statusOutput.trim()) {
+    // Also check if Claude made any commits (in case it committed despite instructions)
+    let hasNewCommits = false;
+    try {
+      if (isPullRequest) {
+        // For PRs: check if there are new commits since we fetched
+        const { stdout: commitDiff } = await exec(
+          `git log origin/${branchName}..HEAD --oneline`,
+          { cwd: REPO_PATH },
+        );
+        hasNewCommits = commitDiff.trim().length > 0;
+      } else {
+        // For issues: check if there are commits ahead of base branch
+        const { stdout: commitDiff } = await exec(
+          `git log origin/${baseBranch}..HEAD --oneline`,
+          { cwd: REPO_PATH },
+        );
+        hasNewCommits = commitDiff.trim().length > 0;
+      }
+    } catch {
+      // Fallback: check against local branch
+      try {
+        const compareBranch = isPullRequest ? baseBranch : baseBranch;
+        const { stdout: commitDiff } = await exec(
+          `git log ${compareBranch}..HEAD --oneline`,
+          { cwd: REPO_PATH },
+        );
+        hasNewCommits = commitDiff.trim().length > 0;
+      } catch {
+        hasNewCommits = false;
+      }
+    }
+
+    const hasUncommittedChanges = statusOutput.trim().length > 0;
+
+    if (!hasUncommittedChanges && !hasNewCommits) {
       // No changes were made
       if (!isPullRequest) {
         await exec(`git checkout main`, { cwd: REPO_PATH });
@@ -338,12 +373,16 @@ A human may need to review this ${itemType}.`,
       return;
     }
 
-    // Commit the changes
-    await exec("git add -A", { cwd: REPO_PATH });
-    const commitMessage = isPullRequest
-      ? `fix: address review comments on PR #${issueNumber}`
-      : `fix: resolve issue #${issueNumber} - ${issueTitle}`;
-    await exec(`git commit -m "${commitMessage}"`, { cwd: REPO_PATH });
+    // Commit the changes (only if there are uncommitted changes)
+    if (hasUncommittedChanges) {
+      await exec("git add -A", { cwd: REPO_PATH });
+      const commitMessage = isPullRequest
+        ? `fix: address review comments on PR #${issueNumber}`
+        : `fix: resolve issue #${issueNumber} - ${issueTitle}`;
+      await exec(`git commit -m "${commitMessage}"`, { cwd: REPO_PATH });
+    } else if (hasNewCommits) {
+      console.log("Claude already committed the changes, skipping commit step");
+    }
 
     // Push the branch
     if (isPullRequest) {
