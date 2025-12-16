@@ -71,14 +71,30 @@ function runClaude(prompt, cwd) {
 }
 
 /**
- * Post a comment on a GitHub issue using gh CLI
+ * Post a comment on a GitHub issue or PR using gh CLI
  */
-async function postIssueComment(owner, repo, issueNumber, body) {
+async function postComment(owner, repo, number, body, isPullRequest = false) {
   try {
-    await exec(`gh issue comment ${issueNumber} --repo ${owner}/${repo} --body ${JSON.stringify(body)}`);
-    console.log(`Posted comment on issue #${issueNumber}`);
+    const command = isPullRequest ? 'pr' : 'issue';
+    await exec(`gh ${command} comment ${number} --repo ${owner}/${repo} --body ${JSON.stringify(body)}`);
+    console.log(`Posted comment on ${command} #${number}`);
   } catch (error) {
     console.error('Failed to post comment:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Get PR information including head branch using gh CLI
+ */
+async function getPullRequestInfo(owner, repo, prNumber) {
+  try {
+    const { stdout } = await exec(
+      `gh pr view ${prNumber} --repo ${owner}/${repo} --json headRefName,baseRefName`
+    );
+    return JSON.parse(stdout);
+  } catch (error) {
+    console.error('Failed to get PR info:', error.message);
     throw error;
   }
 }
@@ -106,20 +122,29 @@ async function createPullRequest(owner, repo, title, body, head, base = 'main') 
 }
 
 /**
- * Main handler for processing GitHub issues
+ * Main handler for processing GitHub issues or PR comments
  */
-export async function handleIssue({ issueNumber, issueTitle, issueBody, issueUrl, repoOwner, repoName }) {
+export async function handleIssue({ issueNumber, issueTitle, issueBody, issueUrl, repoOwner, repoName, commentBody, isPullRequest = false, pullRequestUrl = null }) {
+  const itemType = isPullRequest ? 'PR' : 'issue';
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`Processing issue #${issueNumber}: ${issueTitle}`);
+  console.log(`Processing ${itemType} #${issueNumber}: ${issueTitle}`);
   console.log(`${'='.repeat(60)}\n`);
 
-  // Step 1: Ask Claude to analyze if this issue can be resolved automatically
-  const analysisPrompt = `You are analyzing a GitHub issue to determine if it can be resolved automatically without human intervention.
+  // Build context based on whether this is a PR comment or an issue
+  const contextDescription = isPullRequest
+    ? `You are analyzing a comment on a GitHub Pull Request to determine if the requested changes can be made automatically.`
+    : `You are analyzing a GitHub issue to determine if it can be resolved automatically without human intervention.`;
 
-Issue #${issueNumber}: ${issueTitle}
+  const taskDescription = isPullRequest && commentBody
+    ? `Comment requesting changes:\n${commentBody}`
+    : `Issue Body:\n${issueBody || '(No description provided)'}`;
 
-Issue Body:
-${issueBody || '(No description provided)'}
+  // Step 1: Ask Claude to analyze if this can be resolved automatically
+  const analysisPrompt = `${contextDescription}
+
+${isPullRequest ? 'PR' : 'Issue'} #${issueNumber}: ${issueTitle}
+
+${taskDescription}
 
 Analyze this issue and respond in the following JSON format ONLY (no markdown, no code blocks, just raw JSON):
 {
@@ -162,47 +187,72 @@ An issue CANNOT be resolved automatically if:
     }
     console.log('Analysis result:', analysis);
   } catch (error) {
-    console.error('Failed to analyze issue:', error);
-    await postIssueComment(
+    console.error(`Failed to analyze ${itemType}:`, error);
+    await postComment(
       repoOwner,
       repoName,
       issueNumber,
-      `🤖 **AutoClaude Analysis Failed**\n\nI encountered an error while trying to analyze this issue. A human will need to review it.\n\nError: ${error.message}`
+      `🤖 **AutoClaude Analysis Failed**\n\nI encountered an error while trying to analyze this ${itemType}. A human will need to review it.\n\nError: ${error.message}`,
+      isPullRequest
     );
     return;
   }
 
   // Step 2: If Claude can't resolve it, comment with findings
   if (!analysis.canResolve) {
-    await postIssueComment(
+    await postComment(
       repoOwner,
       repoName,
       issueNumber,
-      `🤖 **AutoClaude Analysis**\n\nI've analyzed this issue and determined that it **cannot be resolved automatically**.\n\n**Reason:** ${analysis.reason}\n\n**Confidence:** ${analysis.confidence}\n\nThis issue requires human attention.`
+      `🤖 **AutoClaude Analysis**\n\nI've analyzed this ${itemType} and determined that it **cannot be resolved automatically**.\n\n**Reason:** ${analysis.reason}\n\n**Confidence:** ${analysis.confidence}\n\nThis ${itemType} requires human attention.`,
+      isPullRequest
     );
     return;
   }
 
   // Step 3: If Claude can resolve it, attempt to create a fix
-  const branchName = `autoclaude/issue-${issueNumber}`;
+  let branchName;
+  let baseBranch = 'main';
 
   try {
-    // Create a new branch
-    await exec(`git checkout -b ${branchName}`, { cwd: REPO_PATH });
-    console.log(`Created branch: ${branchName}`);
+    if (isPullRequest) {
+      // For PRs: checkout the existing PR branch
+      const prInfo = await getPullRequestInfo(repoOwner, repoName, issueNumber);
+      branchName = prInfo.headRefName;
+      baseBranch = prInfo.baseRefName;
 
-    // Ask Claude to implement the fix
-    const fixPrompt = `You need to fix the following GitHub issue. Make the necessary code changes.
+      // Fetch and checkout the PR branch
+      await exec(`git fetch origin ${branchName}`, { cwd: REPO_PATH });
+      await exec(`git checkout ${branchName}`, { cwd: REPO_PATH });
+      console.log(`Checked out PR branch: ${branchName}`);
+    } else {
+      // For issues: create a new branch
+      branchName = `autoclaude/issue-${issueNumber}`;
+      await exec(`git checkout -b ${branchName}`, { cwd: REPO_PATH });
+      console.log(`Created branch: ${branchName}`);
+    }
+
+    // Build the fix prompt based on whether this is a PR or issue
+    const fixPromptContext = isPullRequest && commentBody
+      ? `You need to address the following comment/request on a GitHub Pull Request. Make the necessary code changes.
+
+PR #${issueNumber}: ${issueTitle}
+
+Comment requesting changes:
+${commentBody}`
+      : `You need to fix the following GitHub issue. Make the necessary code changes.
 
 Issue #${issueNumber}: ${issueTitle}
 
 Issue Body:
-${issueBody || '(No description provided)'}
+${issueBody || '(No description provided)'}`;
+
+    const fixPrompt = `${fixPromptContext}
 
 Analysis approach: ${analysis.approach}
 
 Instructions:
-1. Implement the fix for this issue
+1. Implement the fix for this ${itemType}
 2. Make minimal, focused changes
 3. Ensure the code is correct and follows existing patterns
 4. Do not make unrelated changes
@@ -218,29 +268,54 @@ After making changes, provide a brief summary of what you changed.`;
 
     if (!statusOutput.trim()) {
       // No changes were made
-      await exec(`git checkout main`, { cwd: REPO_PATH });
-      await exec(`git branch -D ${branchName}`, { cwd: REPO_PATH });
+      if (!isPullRequest) {
+        await exec(`git checkout main`, { cwd: REPO_PATH });
+        await exec(`git branch -D ${branchName}`, { cwd: REPO_PATH });
+      } else {
+        await exec(`git checkout main`, { cwd: REPO_PATH });
+      }
 
-      await postIssueComment(
+      await postComment(
         repoOwner,
         repoName,
         issueNumber,
-        `🤖 **AutoClaude Analysis**\n\nI analyzed this issue and attempted to create a fix, but no code changes were necessary or I couldn't determine the exact changes needed.\n\n**My Analysis:**\n${analysis.reason}\n\n**Approach Considered:**\n${analysis.approach}\n\nA human may need to review this issue.`
+        `🤖 **AutoClaude Analysis**\n\nI analyzed this ${itemType} and attempted to create a fix, but no code changes were necessary or I couldn't determine the exact changes needed.\n\n**My Analysis:**\n${analysis.reason}\n\n**Approach Considered:**\n${analysis.approach}\n\nA human may need to review this ${itemType}.`,
+        isPullRequest
       );
       return;
     }
 
     // Commit the changes
     await exec('git add -A', { cwd: REPO_PATH });
-    await exec(`git commit -m "fix: resolve issue #${issueNumber} - ${issueTitle}"`, { cwd: REPO_PATH });
+    const commitMessage = isPullRequest
+      ? `fix: address review comments on PR #${issueNumber}`
+      : `fix: resolve issue #${issueNumber} - ${issueTitle}`;
+    await exec(`git commit -m "${commitMessage}"`, { cwd: REPO_PATH });
 
     // Push the branch
-    await exec(`git push -u origin ${branchName}`, { cwd: REPO_PATH });
-    console.log('Pushed branch to origin');
+    if (isPullRequest) {
+      // For PRs: push to existing branch
+      await exec(`git push origin ${branchName}`, { cwd: REPO_PATH });
+      console.log(`Pushed changes to PR branch: ${branchName}`);
 
-    // Create a pull request
-    const prBody = `## Summary
+      // Comment on the PR that changes were made
+      await postComment(
+        repoOwner,
+        repoName,
+        issueNumber,
+        `🤖 **AutoClaude Changes Pushed**\n\nI've addressed the requested changes and pushed a new commit to this PR.\n\n**Changes Made:**\n${fixResult}\n\n**Analysis:**\n- **Confidence:** ${analysis.confidence}\n- **Complexity:** ${analysis.estimatedComplexity}\n- **Approach:** ${analysis.approach}\n\nPlease review the new changes.`,
+        true
+      );
+    } else {
+      // For issues: push new branch and create PR
+      await exec(`git push -u origin ${branchName}`, { cwd: REPO_PATH });
+      console.log('Pushed branch to origin');
+
+      // Create a pull request with "Fixes #XXX" to auto-close the issue
+      const prBody = `## Summary
 Automated fix for #${issueNumber}
+
+Fixes #${issueNumber}
 
 ## Changes
 ${fixResult}
@@ -253,22 +328,25 @@ ${fixResult}
 ---
 🤖 This PR was automatically generated by AutoClaude.`;
 
-    const pr = await createPullRequest(
-      repoOwner,
-      repoName,
-      `fix: ${issueTitle} (Issue #${issueNumber})`,
-      prBody,
-      branchName
-    );
-
-    // Comment on the issue linking to the PR
-    if (pr) {
-      await postIssueComment(
+      const pr = await createPullRequest(
         repoOwner,
         repoName,
-        issueNumber,
-        `🤖 **AutoClaude Fix Created**\n\nI've analyzed this issue and created a fix!\n\n**Pull Request:** #${pr.number}\n**Link:** ${pr.html_url}\n\nPlease review the changes and merge if they look good.`
+        `fix: ${issueTitle} (Issue #${issueNumber})`,
+        prBody,
+        branchName,
+        baseBranch
       );
+
+      // Comment on the issue linking to the PR
+      if (pr) {
+        await postComment(
+          repoOwner,
+          repoName,
+          issueNumber,
+          `🤖 **AutoClaude Fix Created**\n\nI've analyzed this issue and created a fix!\n\n**Pull Request:** #${pr.number}\n**Link:** ${pr.html_url}\n\nPlease review the changes and merge if they look good. The issue will be automatically closed when the PR is merged.`,
+          false
+        );
+      }
     }
 
     // Switch back to main
@@ -280,16 +358,19 @@ ${fixResult}
     // Clean up - try to get back to main
     try {
       await exec('git checkout main', { cwd: REPO_PATH });
-      await exec(`git branch -D ${branchName}`, { cwd: REPO_PATH }).catch(() => {});
+      if (!isPullRequest && branchName) {
+        await exec(`git branch -D ${branchName}`, { cwd: REPO_PATH }).catch(() => {});
+      }
     } catch (cleanupError) {
       console.error('Cleanup failed:', cleanupError);
     }
 
-    await postIssueComment(
+    await postComment(
       repoOwner,
       repoName,
       issueNumber,
-      `🤖 **AutoClaude Fix Failed**\n\nI analyzed this issue and attempted to create a fix, but encountered an error.\n\n**My Analysis:**\n- **Can Resolve:** Yes (${analysis.confidence} confidence)\n- **Approach:** ${analysis.approach}\n\n**Error:** ${error.message}\n\nA human will need to review this issue.`
+      `🤖 **AutoClaude Fix Failed**\n\nI analyzed this ${itemType} and attempted to create a fix, but encountered an error.\n\n**My Analysis:**\n- **Can Resolve:** Yes (${analysis.confidence} confidence)\n- **Approach:** ${analysis.approach}\n\n**Error:** ${error.message}\n\nA human will need to review this ${itemType}.`,
+      isPullRequest
     );
   }
 }
