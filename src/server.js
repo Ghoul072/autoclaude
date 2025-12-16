@@ -74,12 +74,15 @@ app.post('/webhook/github', async (req, res) => {
       return res.json({ message: 'No matching mention found' });
     }
 
-    console.log(`User @${GITHUB_MENTION_USER} mentioned in comment on issue #${issue.number}`);
+    // Detect if this is a comment on a PR (not an issue)
+    const isPullRequest = !!issue.pull_request;
+
+    console.log(`User @${GITHUB_MENTION_USER} mentioned in comment on ${isPullRequest ? 'PR' : 'issue'} #${issue.number}`);
 
     // Respond immediately to avoid timeout
     res.json({ message: 'Comment mention received, processing...' });
 
-    // Process the issue asynchronously
+    // Process the issue/PR asynchronously
     try {
       await handleIssue({
         issueNumber: issue.number,
@@ -90,6 +93,8 @@ app.post('/webhook/github', async (req, res) => {
         repoName: repository.name,
         repoFullName: repository.full_name,
         commentBody: comment.body,
+        isPullRequest,
+        pullRequestUrl: isPullRequest ? issue.pull_request.url : null,
       });
     } catch (error) {
       console.error('Error processing issue from comment:', error);
