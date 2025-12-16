@@ -6,14 +6,18 @@ const exec = promisify(execCallback);
 
 // Path to the repo where Claude will work (configure this)
 const REPO_PATH = process.env.REPO_PATH || process.cwd();
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
 /**
- * Run Claude CLI with a prompt and return the output
+ * Run Claude CLI by piping prompt to stdin (using -p flag hangs)
  */
 function runClaude(prompt, cwd) {
+  console.log('Running Claude CLI...');
+
   return new Promise((resolve, reject) => {
-    const claude = spawn('claude', ['-p', prompt, '--output-format', 'text'], {
+    const claude = spawn('claude', [
+      '--output-format', 'text',
+      '--dangerously-skip-permissions'
+    ], {
       cwd,
       env: { ...process.env },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -22,15 +26,24 @@ function runClaude(prompt, cwd) {
     let stdout = '';
     let stderr = '';
 
+    // Timeout after 5 minutes
+    const timeout = setTimeout(() => {
+      claude.kill();
+      reject(new Error('Claude CLI timed out'));
+    }, 300000);
+
     claude.stdout.on('data', (data) => {
       stdout += data.toString();
+      process.stdout.write(data); // Show output in real-time
     });
 
     claude.stderr.on('data', (data) => {
       stderr += data.toString();
+      process.stderr.write(data);
     });
 
     claude.on('close', (code) => {
+      clearTimeout(timeout);
       if (code === 0) {
         resolve(stdout.trim());
       } else {
@@ -39,71 +52,49 @@ function runClaude(prompt, cwd) {
     });
 
     claude.on('error', (err) => {
+      clearTimeout(timeout);
       reject(err);
     });
+
+    // Pipe prompt to stdin and close it
+    claude.stdin.write(prompt);
+    claude.stdin.end();
   });
 }
 
 /**
- * Post a comment on a GitHub issue
+ * Post a comment on a GitHub issue using gh CLI
  */
 async function postIssueComment(owner, repo, issueNumber, body) {
-  if (!GITHUB_TOKEN) {
-    console.error('GITHUB_TOKEN not set - cannot post comment');
-    return;
+  try {
+    await exec(`gh issue comment ${issueNumber} --repo ${owner}/${repo} --body ${JSON.stringify(body)}`);
+    console.log(`Posted comment on issue #${issueNumber}`);
+  } catch (error) {
+    console.error('Failed to post comment:', error.message);
+    throw error;
   }
-
-  const url = `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/comments`;
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${GITHUB_TOKEN}`,
-      'Accept': 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ body }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Failed to post comment: ${response.status} ${error}`);
-  }
-
-  console.log(`Posted comment on issue #${issueNumber}`);
 }
 
 /**
- * Create a pull request
+ * Create a pull request using gh CLI
  */
 async function createPullRequest(owner, repo, title, body, head, base = 'main') {
-  if (!GITHUB_TOKEN) {
-    console.error('GITHUB_TOKEN not set - cannot create PR');
-    return null;
+  try {
+    const { stdout } = await exec(
+      `gh pr create --repo ${owner}/${repo} --title ${JSON.stringify(title)} --body ${JSON.stringify(body)} --head ${head} --base ${base}`
+    );
+
+    // Extract PR URL from output
+    const prUrl = stdout.trim();
+    const prNumberMatch = prUrl.match(/\/pull\/(\d+)/);
+    const prNumber = prNumberMatch ? prNumberMatch[1] : null;
+
+    console.log(`Created PR: ${prUrl}`);
+    return { number: prNumber, html_url: prUrl };
+  } catch (error) {
+    console.error('Failed to create PR:', error.message);
+    throw error;
   }
-
-  const url = `https://api.github.com/repos/${owner}/${repo}/pulls`;
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${GITHUB_TOKEN}`,
-      'Accept': 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ title, body, head, base }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Failed to create PR: ${response.status} ${error}`);
-  }
-
-  const pr = await response.json();
-  console.log(`Created PR #${pr.number}: ${pr.html_url}`);
-  return pr;
 }
 
 /**
