@@ -4,6 +4,14 @@ import { exec as execCallback } from 'child_process';
 
 const exec = promisify(execCallback);
 
+/**
+ * Normalize escaped newlines in a string (convert literal \n to actual newlines)
+ */
+function normalizeNewlines(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/\\n/g, '\n');
+}
+
 // Path to the repo where Claude will work (configure this)
 const REPO_PATH = process.env.REPO_PATH || process.cwd();
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
@@ -152,6 +160,12 @@ An issue CANNOT be resolved automatically if:
     const jsonMatch = analysisResult.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       analysis = JSON.parse(jsonMatch[0]);
+      // Normalize escaped newlines in string values
+      for (const key of Object.keys(analysis)) {
+        if (typeof analysis[key] === 'string') {
+          analysis[key] = normalizeNewlines(analysis[key]);
+        }
+      }
     } else {
       throw new Error('No JSON found in response');
     }
@@ -204,7 +218,8 @@ Instructions:
 
 After making changes, provide a brief summary of what you changed.`;
 
-    const fixResult = await runClaude(fixPrompt, REPO_PATH);
+    const fixResultRaw = await runClaude(fixPrompt, REPO_PATH);
+    const fixResult = normalizeNewlines(fixResultRaw);
     console.log('Fix result:', fixResult);
 
     // Check if there are any changes
