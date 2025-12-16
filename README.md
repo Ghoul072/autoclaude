@@ -14,7 +14,7 @@ Automated GitHub issue resolver powered by Claude. When an issue is opened, Clau
 
 - Node.js 18+
 - Claude CLI installed and authenticated (`claude` command available)
-- GitHub Personal Access Token with `repo` permissions
+- GitHub CLI installed and authenticated (`gh` command available)
 - A server/machine where this service can run continuously
 
 ## Setup
