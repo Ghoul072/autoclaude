@@ -29,10 +29,9 @@ function verifySignature(req) {
     return false;
   }
 
-  const body = JSON.stringify(req.body);
   const expectedSignature =
     "sha256=" +
-    crypto.createHmac("sha256", WEBHOOK_SECRET).update(body).digest("hex");
+    crypto.createHmac("sha256", WEBHOOK_SECRET).update(req.rawBody).digest("hex");
 
   return crypto.timingSafeEqual(
     Buffer.from(signature),
