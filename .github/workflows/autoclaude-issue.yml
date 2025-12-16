@@ -15,12 +15,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Send event to AutoClaude
-        run: |
-          curl -X POST "${{ secrets.AUTOCLAUDE_WEBHOOK_URL }}/webhook/github" \
-            -H "Content-Type: application/json" \
-            -H "X-GitHub-Event: ${{ github.event_name }}" \
-            -H "X-Hub-Signature-256: sha256=$(echo -n '${{ toJson(github.event) }}' | openssl dgst -sha256 -hmac '${{ secrets.AUTOCLAUDE_WEBHOOK_SECRET }}' | cut -d' ' -f2)" \
-            -d '${{ toJson(github.event) }}'
         env:
           AUTOCLAUDE_WEBHOOK_URL: ${{ secrets.AUTOCLAUDE_WEBHOOK_URL }}
           AUTOCLAUDE_WEBHOOK_SECRET: ${{ secrets.AUTOCLAUDE_WEBHOOK_SECRET }}
+          GITHUB_EVENT_JSON: ${{ toJson(github.event) }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: |
+          # Write payload to file to avoid shell escaping issues
+          echo "$GITHUB_EVENT_JSON" > /tmp/payload.json
+
+          # Calculate signature from the file
+          SIGNATURE="sha256=$(cat /tmp/payload.json | openssl dgst -sha256 -hmac "$AUTOCLAUDE_WEBHOOK_SECRET" | cut -d' ' -f2)"
+
+          # Send the webhook
+          curl -X POST "$AUTOCLAUDE_WEBHOOK_URL/webhook/github" \
+            -H "Content-Type: application/json" \
+            -H "X-GitHub-Event: $GITHUB_EVENT_NAME" \
+            -H "X-Hub-Signature-256: $SIGNATURE" \
+            --data-binary @/tmp/payload.json
