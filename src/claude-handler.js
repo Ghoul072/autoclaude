@@ -397,10 +397,16 @@ A human may need to review this ${itemType}.`,
     // Commit the changes (only if there are uncommitted changes)
     if (hasUncommittedChanges) {
       await exec("git add -A", { cwd: REPO_PATH });
-      const commitMessage = isPullRequest
+      const commitSubject = isPullRequest
         ? `fix: address review comments on PR #${issueNumber}`
         : `fix: resolve issue #${issueNumber} - ${issueTitle}`;
-      await exec(`git commit -m "${commitMessage}"`, { cwd: REPO_PATH });
+      const commitFooter = `🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>`;
+      await exec(
+        `git commit -m "${commitSubject}" -m "${commitFooter}"`,
+        { cwd: REPO_PATH },
+      );
     } else if (hasNewCommits) {
       console.log("Claude already committed the changes, skipping commit step");
     }
