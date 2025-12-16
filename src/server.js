@@ -5,6 +5,7 @@ import { handleIssue } from './claude-handler.js';
 const app = express();
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+const GITHUB_MENTION_USER = process.env.GITHUB_MENTION_USER;
 
 // Parse JSON body
 app.use(express.json());
@@ -51,7 +52,51 @@ app.post('/webhook/github', async (req, res) => {
 
   console.log(`Received GitHub event: ${event}`);
 
-  // Only handle issue events
+  // Handle issue_comment events (when user is mentioned)
+  if (event === 'issue_comment') {
+    if (payload.action !== 'created') {
+      return res.json({ message: 'Action ignored', action: payload.action });
+    }
+
+    const comment = payload.comment;
+    const issue = payload.issue;
+    const repository = payload.repository;
+
+    // Check if the configured user is mentioned in the comment
+    if (!GITHUB_MENTION_USER) {
+      console.log('GITHUB_MENTION_USER not configured, ignoring comment');
+      return res.json({ message: 'Mention user not configured' });
+    }
+
+    const mentionPattern = `@${GITHUB_MENTION_USER}`;
+    if (!comment.body || !comment.body.includes(mentionPattern)) {
+      return res.json({ message: 'No matching mention found' });
+    }
+
+    console.log(`User @${GITHUB_MENTION_USER} mentioned in comment on issue #${issue.number}`);
+
+    // Respond immediately to avoid timeout
+    res.json({ message: 'Comment mention received, processing...' });
+
+    // Process the issue asynchronously
+    try {
+      await handleIssue({
+        issueNumber: issue.number,
+        issueTitle: issue.title,
+        issueBody: issue.body || '',
+        issueUrl: issue.html_url,
+        repoOwner: repository.owner.login,
+        repoName: repository.name,
+        repoFullName: repository.full_name,
+        commentBody: comment.body,
+      });
+    } catch (error) {
+      console.error('Error processing issue from comment:', error);
+    }
+    return;
+  }
+
+  // Handle issue events
   if (event !== 'issues') {
     return res.json({ message: 'Event ignored', event });
   }
