@@ -1,6 +1,5 @@
-import { spawn } from 'child_process';
-import { promisify } from 'util';
-import { exec as execCallback } from 'child_process';
+import { exec as execCallback, spawn } from "child_process";
+import { promisify } from "util";
 
 const exec = promisify(execCallback);
 
@@ -8,8 +7,8 @@ const exec = promisify(execCallback);
  * Normalize escaped newlines in a string (convert literal \n to actual newlines)
  */
 function normalizeNewlines(str) {
-  if (typeof str !== 'string') return str;
-  return str.replace(/\\n/g, '\n');
+  if (typeof str !== "string") return str;
+  return str.replace(/\\n/g, "\n");
 }
 
 // Path to the repo where Claude will work (configure this)
@@ -19,38 +18,39 @@ const REPO_PATH = process.env.REPO_PATH || process.cwd();
  * Run Claude CLI by piping prompt to stdin (using -p flag hangs)
  */
 function runClaude(prompt, cwd) {
-  console.log('Running Claude CLI...');
+  console.log("Running Claude CLI...");
 
   return new Promise((resolve, reject) => {
-    const claude = spawn('claude', [
-      '--output-format', 'text',
-      '--dangerously-skip-permissions'
-    ], {
-      cwd,
-      env: { ...process.env },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const claude = spawn(
+      "claude",
+      ["--output-format", "text", "--dangerously-skip-permissions"],
+      {
+        cwd,
+        env: { ...process.env },
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
 
-    let stdout = '';
-    let stderr = '';
+    let stdout = "";
+    let stderr = "";
 
     // Timeout after 5 minutes
     const timeout = setTimeout(() => {
       claude.kill();
-      reject(new Error('Claude CLI timed out'));
+      reject(new Error("Claude CLI timed out"));
     }, 300000);
 
-    claude.stdout.on('data', (data) => {
+    claude.stdout.on("data", (data) => {
       stdout += data.toString();
       process.stdout.write(data); // Show output in real-time
     });
 
-    claude.stderr.on('data', (data) => {
+    claude.stderr.on("data", (data) => {
       stderr += data.toString();
       process.stderr.write(data);
     });
 
-    claude.on('close', (code) => {
+    claude.on("close", (code) => {
       clearTimeout(timeout);
       if (code === 0) {
         resolve(stdout.trim());
@@ -59,7 +59,7 @@ function runClaude(prompt, cwd) {
       }
     });
 
-    claude.on('error', (err) => {
+    claude.on("error", (err) => {
       clearTimeout(timeout);
       reject(err);
     });
@@ -75,11 +75,13 @@ function runClaude(prompt, cwd) {
  */
 async function postComment(owner, repo, number, body, isPullRequest = false) {
   try {
-    const command = isPullRequest ? 'pr' : 'issue';
-    await exec(`gh ${command} comment ${number} --repo ${owner}/${repo} --body ${JSON.stringify(body)}`);
+    const command = isPullRequest ? "pr" : "issue";
+    await exec(
+      `gh ${command} comment ${number} --repo ${owner}/${repo} --body ${JSON.stringify(body)}`,
+    );
     console.log(`Posted comment on ${command} #${number}`);
   } catch (error) {
-    console.error('Failed to post comment:', error.message);
+    console.error("Failed to post comment:", error.message);
     throw error;
   }
 }
@@ -90,11 +92,11 @@ async function postComment(owner, repo, number, body, isPullRequest = false) {
 async function getPullRequestInfo(owner, repo, prNumber) {
   try {
     const { stdout } = await exec(
-      `gh pr view ${prNumber} --repo ${owner}/${repo} --json headRefName,baseRefName`
+      `gh pr view ${prNumber} --repo ${owner}/${repo} --json headRefName,baseRefName`,
     );
     return JSON.parse(stdout);
   } catch (error) {
-    console.error('Failed to get PR info:', error.message);
+    console.error("Failed to get PR info:", error.message);
     throw error;
   }
 }
@@ -102,47 +104,88 @@ async function getPullRequestInfo(owner, repo, prNumber) {
 /**
  * Create a pull request using gh CLI
  */
-async function createPullRequest(owner, repo, title, body, head, base = 'main') {
-  try {
-    const { stdout } = await exec(
-      `gh pr create --repo ${owner}/${repo} --title ${JSON.stringify(title)} --body ${JSON.stringify(body)} --head ${head} --base ${base}`
-    );
+async function createPullRequest(
+  owner,
+  repo,
+  title,
+  body,
+  head,
+  base = "main",
+) {
+  return new Promise((resolve, reject) => {
+    const gh = spawn("gh", [
+      "pr",
+      "create",
+      "--repo",
+      `${owner}/${repo}`,
+      "--title",
+      title,
+      "--head",
+      head,
+      "--base",
+      base,
+      "--body-file",
+      "-",
+    ]);
 
-    // Extract PR URL from output
-    const prUrl = stdout.trim();
-    const prNumberMatch = prUrl.match(/\/pull\/(\d+)/);
-    const prNumber = prNumberMatch ? prNumberMatch[1] : null;
+    let stdout = "";
+    gh.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
 
-    console.log(`Created PR: ${prUrl}`);
-    return { number: prNumber, html_url: prUrl };
-  } catch (error) {
-    console.error('Failed to create PR:', error.message);
-    throw error;
-  }
+    gh.on("close", (code) => {
+      if (code === 0) {
+        const prUrl = stdout.trim();
+        const prNumberMatch = prUrl.match(/\/pull\/(\d+)/);
+        const prNumber = prNumberMatch ? prNumberMatch[1] : null;
+
+        console.log(`Created PR: ${prUrl}`);
+        resolve({ number: prNumber, html_url: prUrl });
+      } else {
+        reject(new Error(`gh pr create exited with code ${code}`));
+      }
+    });
+
+    gh.on("error", reject);
+
+    gh.stdin.write(body);
+    gh.stdin.end();
+  });
 }
 
 /**
  * Main handler for processing GitHub issues or PR comments
  */
-export async function handleIssue({ issueNumber, issueTitle, issueBody, issueUrl, repoOwner, repoName, commentBody, isPullRequest = false, pullRequestUrl = null }) {
-  const itemType = isPullRequest ? 'PR' : 'issue';
-  console.log(`\n${'='.repeat(60)}`);
+export async function handleIssue({
+  issueNumber,
+  issueTitle,
+  issueBody,
+  issueUrl,
+  repoOwner,
+  repoName,
+  commentBody,
+  isPullRequest = false,
+  pullRequestUrl = null,
+}) {
+  const itemType = isPullRequest ? "PR" : "issue";
+  console.log(`\n${"=".repeat(60)}`);
   console.log(`Processing ${itemType} #${issueNumber}: ${issueTitle}`);
-  console.log(`${'='.repeat(60)}\n`);
+  console.log(`${"=".repeat(60)}\n`);
 
   // Build context based on whether this is a PR comment or an issue
   const contextDescription = isPullRequest
     ? `You are analyzing a comment on a GitHub Pull Request to determine if the requested changes can be made automatically.`
     : `You are analyzing a GitHub issue to determine if it can be resolved automatically without human intervention.`;
 
-  const taskDescription = isPullRequest && commentBody
-    ? `Comment requesting changes:\n${commentBody}`
-    : `Issue Body:\n${issueBody || '(No description provided)'}`;
+  const taskDescription =
+    isPullRequest && commentBody
+      ? `Comment requesting changes:\n${commentBody}`
+      : `Issue Body:\n${issueBody || "(No description provided)"}`;
 
   // Step 1: Ask Claude to analyze if this can be resolved automatically
   const analysisPrompt = `${contextDescription}
 
-${isPullRequest ? 'PR' : 'Issue'} #${issueNumber}: ${issueTitle}
+${isPullRequest ? "PR" : "Issue"} #${issueNumber}: ${issueTitle}
 
 ${taskDescription}
 
@@ -178,14 +221,14 @@ An issue CANNOT be resolved automatically if:
       analysis = JSON.parse(jsonMatch[0]);
       // Normalize escaped newlines in string values
       for (const key of Object.keys(analysis)) {
-        if (typeof analysis[key] === 'string') {
+        if (typeof analysis[key] === "string") {
           analysis[key] = normalizeNewlines(analysis[key]);
         }
       }
     } else {
-      throw new Error('No JSON found in response');
+      throw new Error("No JSON found in response");
     }
-    console.log('Analysis result:', analysis);
+    console.log("Analysis result:", analysis);
   } catch (error) {
     console.error(`Failed to analyze ${itemType}:`, error);
     await postComment(
@@ -193,7 +236,7 @@ An issue CANNOT be resolved automatically if:
       repoName,
       issueNumber,
       `🤖 **AutoClaude Analysis Failed**\n\nI encountered an error while trying to analyze this ${itemType}. A human will need to review it.\n\nError: ${error.message}`,
-      isPullRequest
+      isPullRequest,
     );
     return;
   }
@@ -205,14 +248,14 @@ An issue CANNOT be resolved automatically if:
       repoName,
       issueNumber,
       `🤖 **AutoClaude Analysis**\n\nI've analyzed this ${itemType} and determined that it **cannot be resolved automatically**.\n\n**Reason:** ${analysis.reason}\n\n**Confidence:** ${analysis.confidence}\n\nThis ${itemType} requires human attention.`,
-      isPullRequest
+      isPullRequest,
     );
     return;
   }
 
   // Step 3: If Claude can resolve it, attempt to create a fix
   let branchName;
-  let baseBranch = 'main';
+  let baseBranch = "main";
 
   try {
     if (isPullRequest) {
@@ -233,19 +276,20 @@ An issue CANNOT be resolved automatically if:
     }
 
     // Build the fix prompt based on whether this is a PR or issue
-    const fixPromptContext = isPullRequest && commentBody
-      ? `You need to address the following comment/request on a GitHub Pull Request. Make the necessary code changes.
+    const fixPromptContext =
+      isPullRequest && commentBody
+        ? `You need to address the following comment/request on a GitHub Pull Request. Make the necessary code changes.
 
 PR #${issueNumber}: ${issueTitle}
 
 Comment requesting changes:
 ${commentBody}`
-      : `You need to fix the following GitHub issue. Make the necessary code changes.
+        : `You need to fix the following GitHub issue. Make the necessary code changes.
 
 Issue #${issueNumber}: ${issueTitle}
 
 Issue Body:
-${issueBody || '(No description provided)'}`;
+${issueBody || "(No description provided)"}`;
 
     const fixPrompt = `${fixPromptContext}
 
@@ -261,10 +305,12 @@ After making changes, provide a brief summary of what you changed.`;
 
     const fixResultRaw = await runClaude(fixPrompt, REPO_PATH);
     const fixResult = normalizeNewlines(fixResultRaw);
-    console.log('Fix result:', fixResult);
+    console.log("Fix result:", fixResult);
 
     // Check if there are any changes
-    const { stdout: statusOutput } = await exec('git status --porcelain', { cwd: REPO_PATH });
+    const { stdout: statusOutput } = await exec("git status --porcelain", {
+      cwd: REPO_PATH,
+    });
 
     if (!statusOutput.trim()) {
       // No changes were made
@@ -280,13 +326,13 @@ After making changes, provide a brief summary of what you changed.`;
         repoName,
         issueNumber,
         `🤖 **AutoClaude Analysis**\n\nI analyzed this ${itemType} and attempted to create a fix, but no code changes were necessary or I couldn't determine the exact changes needed.\n\n**My Analysis:**\n${analysis.reason}\n\n**Approach Considered:**\n${analysis.approach}\n\nA human may need to review this ${itemType}.`,
-        isPullRequest
+        isPullRequest,
       );
       return;
     }
 
     // Commit the changes
-    await exec('git add -A', { cwd: REPO_PATH });
+    await exec("git add -A", { cwd: REPO_PATH });
     const commitMessage = isPullRequest
       ? `fix: address review comments on PR #${issueNumber}`
       : `fix: resolve issue #${issueNumber} - ${issueTitle}`;
@@ -304,12 +350,12 @@ After making changes, provide a brief summary of what you changed.`;
         repoName,
         issueNumber,
         `🤖 **AutoClaude Changes Pushed**\n\nI've addressed the requested changes and pushed a new commit to this PR.\n\n**Changes Made:**\n${fixResult}\n\n**Analysis:**\n- **Confidence:** ${analysis.confidence}\n- **Complexity:** ${analysis.estimatedComplexity}\n- **Approach:** ${analysis.approach}\n\nPlease review the new changes.`,
-        true
+        true,
       );
     } else {
       // For issues: push new branch and create PR
       await exec(`git push -u origin ${branchName}`, { cwd: REPO_PATH });
-      console.log('Pushed branch to origin');
+      console.log("Pushed branch to origin");
 
       // Create a pull request with "Fixes #XXX" to auto-close the issue
       const prBody = `## Summary
@@ -334,7 +380,7 @@ ${fixResult}
         `fix: ${issueTitle} (Issue #${issueNumber})`,
         prBody,
         branchName,
-        baseBranch
+        baseBranch,
       );
 
       // Comment on the issue linking to the PR
@@ -344,25 +390,26 @@ ${fixResult}
           repoName,
           issueNumber,
           `🤖 **AutoClaude Fix Created**\n\nI've analyzed this issue and created a fix!\n\n**Pull Request:** #${pr.number}\n**Link:** ${pr.html_url}\n\nPlease review the changes and merge if they look good. The issue will be automatically closed when the PR is merged.`,
-          false
+          false,
         );
       }
     }
 
     // Switch back to main
-    await exec('git checkout main', { cwd: REPO_PATH });
-
+    await exec("git checkout main", { cwd: REPO_PATH });
   } catch (error) {
-    console.error('Failed to create fix:', error);
+    console.error("Failed to create fix:", error);
 
     // Clean up - try to get back to main
     try {
-      await exec('git checkout main', { cwd: REPO_PATH });
+      await exec("git checkout main", { cwd: REPO_PATH });
       if (!isPullRequest && branchName) {
-        await exec(`git branch -D ${branchName}`, { cwd: REPO_PATH }).catch(() => {});
+        await exec(`git branch -D ${branchName}`, { cwd: REPO_PATH }).catch(
+          () => {},
+        );
       }
     } catch (cleanupError) {
-      console.error('Cleanup failed:', cleanupError);
+      console.error("Cleanup failed:", cleanupError);
     }
 
     await postComment(
@@ -370,7 +417,7 @@ ${fixResult}
       repoName,
       issueNumber,
       `🤖 **AutoClaude Fix Failed**\n\nI analyzed this ${itemType} and attempted to create a fix, but encountered an error.\n\n**My Analysis:**\n- **Can Resolve:** Yes (${analysis.confidence} confidence)\n- **Approach:** ${analysis.approach}\n\n**Error:** ${error.message}\n\nA human will need to review this ${itemType}.`,
-      isPullRequest
+      isPullRequest,
     );
   }
 }

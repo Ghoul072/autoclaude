@@ -1,62 +1,67 @@
-import 'dotenv/config';
-import express from 'express';
-import crypto from 'crypto';
-import { handleIssue } from './claude-handler.js';
+import crypto from "crypto";
+import "dotenv/config";
+import express from "express";
+import { handleIssue } from "./claude-handler.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const GITHUB_MENTION_USER = process.env.GITHUB_MENTION_USER;
 
-// Parse JSON body
-app.use(express.json());
+// Parse JSON body and capture raw body for signature verification
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
+);
 
 // Verify GitHub webhook signature
 function verifySignature(req) {
   if (!WEBHOOK_SECRET) {
-    console.warn('WEBHOOK_SECRET not set - skipping signature verification');
+    console.warn("WEBHOOK_SECRET not set - skipping signature verification");
     return true;
   }
 
-  const signature = req.headers['x-hub-signature-256'];
+  const signature = req.headers["x-hub-signature-256"];
   if (!signature) {
     return false;
   }
 
   const body = JSON.stringify(req.body);
-  const expectedSignature = 'sha256=' + crypto
-    .createHmac('sha256', WEBHOOK_SECRET)
-    .update(body)
-    .digest('hex');
+  const expectedSignature =
+    "sha256=" +
+    crypto.createHmac("sha256", WEBHOOK_SECRET).update(body).digest("hex");
 
   return crypto.timingSafeEqual(
     Buffer.from(signature),
-    Buffer.from(expectedSignature)
+    Buffer.from(expectedSignature),
   );
 }
 
 // Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
+app.get("/health", (req, res) => {
+  res.json({ status: "ok" });
 });
 
 // GitHub webhook endpoint
-app.post('/webhook/github', async (req, res) => {
+app.post("/webhook/github", async (req, res) => {
   // Verify signature
   if (!verifySignature(req)) {
-    console.error('Invalid webhook signature');
-    return res.status(401).json({ error: 'Invalid signature' });
+    console.error("Invalid webhook signature");
+    return res.status(401).json({ error: "Invalid signature" });
   }
 
-  const event = req.headers['x-github-event'];
+  const event = req.headers["x-github-event"];
   const payload = req.body;
 
   console.log(`Received GitHub event: ${event}`);
 
   // Handle issue_comment events (when user is mentioned)
-  if (event === 'issue_comment') {
-    if (payload.action !== 'created') {
-      return res.json({ message: 'Action ignored', action: payload.action });
+  if (event === "issue_comment") {
+    if (payload.action !== "created") {
+      return res.json({ message: "Action ignored", action: payload.action });
     }
 
     const comment = payload.comment;
@@ -65,29 +70,31 @@ app.post('/webhook/github', async (req, res) => {
 
     // Check if the configured user is mentioned in the comment
     if (!GITHUB_MENTION_USER) {
-      console.log('GITHUB_MENTION_USER not configured, ignoring comment');
-      return res.json({ message: 'Mention user not configured' });
+      console.log("GITHUB_MENTION_USER not configured, ignoring comment");
+      return res.json({ message: "Mention user not configured" });
     }
 
     const mentionPattern = `@${GITHUB_MENTION_USER}`;
     if (!comment.body || !comment.body.includes(mentionPattern)) {
-      return res.json({ message: 'No matching mention found' });
+      return res.json({ message: "No matching mention found" });
     }
 
     // Detect if this is a comment on a PR (not an issue)
     const isPullRequest = !!issue.pull_request;
 
-    console.log(`User @${GITHUB_MENTION_USER} mentioned in comment on ${isPullRequest ? 'PR' : 'issue'} #${issue.number}`);
+    console.log(
+      `User @${GITHUB_MENTION_USER} mentioned in comment on ${isPullRequest ? "PR" : "issue"} #${issue.number}`,
+    );
 
     // Respond immediately to avoid timeout
-    res.json({ message: 'Comment mention received, processing...' });
+    res.json({ message: "Comment mention received, processing..." });
 
     // Process the issue/PR asynchronously
     try {
       await handleIssue({
         issueNumber: issue.number,
         issueTitle: issue.title,
-        issueBody: issue.body || '',
+        issueBody: issue.body || "",
         issueUrl: issue.html_url,
         repoOwner: repository.owner.login,
         repoName: repository.name,
@@ -97,19 +104,19 @@ app.post('/webhook/github', async (req, res) => {
         pullRequestUrl: isPullRequest ? issue.pull_request.url : null,
       });
     } catch (error) {
-      console.error('Error processing issue from comment:', error);
+      console.error("Error processing issue from comment:", error);
     }
     return;
   }
 
   // Handle issue events
-  if (event !== 'issues') {
-    return res.json({ message: 'Event ignored', event });
+  if (event !== "issues") {
+    return res.json({ message: "Event ignored", event });
   }
 
   // Only handle opened issues
-  if (payload.action !== 'opened') {
-    return res.json({ message: 'Action ignored', action: payload.action });
+  if (payload.action !== "opened") {
+    return res.json({ message: "Action ignored", action: payload.action });
   }
 
   const issue = payload.issue;
@@ -118,21 +125,21 @@ app.post('/webhook/github', async (req, res) => {
   console.log(`Processing issue #${issue.number}: ${issue.title}`);
 
   // Respond immediately to avoid timeout
-  res.json({ message: 'Issue received, processing...' });
+  res.json({ message: "Issue received, processing..." });
 
   // Process the issue asynchronously
   try {
     await handleIssue({
       issueNumber: issue.number,
       issueTitle: issue.title,
-      issueBody: issue.body || '',
+      issueBody: issue.body || "",
       issueUrl: issue.html_url,
       repoOwner: repository.owner.login,
       repoName: repository.name,
       repoFullName: repository.full_name,
     });
   } catch (error) {
-    console.error('Error processing issue:', error);
+    console.error("Error processing issue:", error);
   }
 });
 
